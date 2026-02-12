@@ -2,7 +2,7 @@
 """link_guard.py: Offline URL/domain phishing risk heuristic scorer + simple GUI.
 
 GUI usage (no terminal):
-  - Just run the file (double-click or Run in IDE), paste a URL, press Check.
+  - Run the file, paste a URL, press Check (or hit Enter).
 
 CLI usage (optional):
   python link_guard.py --cli "https://secure-paypal.com/login" --explain
@@ -228,10 +228,23 @@ def build_explanation(result: dict[str, Any]) -> str:
     )
 
 
+def _safe_filename_piece(text: str) -> str:
+    """Make a safe-ish filename part from user input."""
+    t = text.strip().lower()
+    t = re.sub(r"^https?://", "", t)
+    t = t.replace("/", "_").replace("\\", "_")
+    t = re.sub(r"[^a-z0-9._-]+", "_", t)
+    return t[:80] or "report"
+
+
 def run_gui() -> None:
-    """Super simple GUI: paste URL -> get risk result."""
+    """Super simple GUI: paste URL -> get risk result. Includes Copy and Save features."""
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import ttk, filedialog, messagebox
+    from datetime import datetime
+
+    last_text_report: str = ""
+    last_json_report: dict[str, Any] | None = None
 
     def set_output(text: str) -> None:
         txt.configure(state="normal")
@@ -239,7 +252,7 @@ def run_gui() -> None:
         txt.insert("1.0", text)
         txt.configure(state="disabled")
 
-    def format_result(url: str) -> str:
+    def make_reports(url: str) -> tuple[str, dict[str, Any]]:
         parsed = normalize_input(url)
         result = analyze(parsed)
         result["explanation"] = build_explanation(result)
@@ -262,21 +275,88 @@ def run_gui() -> None:
         lines.append(result["explanation"])
         lines.append("")
         lines.append(AUTHOR_MARK)
-        return "\n".join(lines)
 
-    def on_check() -> None:
+        text_report = "\n".join(lines)
+        return text_report, result
+
+    def on_check(_event: object | None = None) -> None:
+        nonlocal last_text_report, last_json_report
         url = entry.get().strip()
         if not url:
+            last_text_report = ""
+            last_json_report = None
+            status_var.set("Paste a URL or domain first.")
             set_output("Paste a URL or domain first.\n\n" + AUTHOR_MARK)
             return
         try:
-            set_output(format_result(url))
+            text_report, json_report = make_reports(url)
+            last_text_report = text_report
+            last_json_report = json_report
+            set_output(text_report)
+            status_var.set("Checked.")
         except Exception as e:
+            last_text_report = ""
+            last_json_report = None
+            status_var.set("Error.")
             set_output(f"Error: {e}\n\n{AUTHOR_MARK}")
 
+    def on_copy() -> None:
+        if not last_text_report:
+            status_var.set("Nothing to copy yet.")
+            return
+        root.clipboard_clear()
+        root.clipboard_append(last_text_report)
+        status_var.set("Copied to clipboard.")
+
+    def on_save_txt() -> None:
+        if not last_text_report:
+            status_var.set("Nothing to save yet.")
+            return
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = _safe_filename_piece(entry.get())
+        default_name = f"link_guard_{base}_{ts}.txt"
+        path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            initialfile=default_name,
+            filetypes=[("Text file", "*.txt"), ("All files", "*.*")],
+            title="Save report as TXT",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(last_text_report)
+            status_var.set("Saved TXT report.")
+        except Exception as e:
+            messagebox.showerror("Save failed", str(e))
+            status_var.set("Save failed.")
+
+    def on_save_json() -> None:
+        if not last_json_report:
+            status_var.set("Nothing to save yet.")
+            return
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = _safe_filename_piece(entry.get())
+        default_name = f"link_guard_{base}_{ts}.json"
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            initialfile=default_name,
+            filetypes=[("JSON file", "*.json"), ("All files", "*.*")],
+            title="Save report as JSON",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(last_json_report, f, ensure_ascii=False, indent=2)
+            status_var.set("Saved JSON report.")
+        except Exception as e:
+            messagebox.showerror("Save failed", str(e))
+            status_var.set("Save failed.")
+
     root = tk.Tk()
-    root.title("Link Guard - URL Risk Checker")
-    root.geometry("780x580")
+    root.title("Link Guard by Edison")
+    root.geometry("820x620")
 
     frm = ttk.Frame(root, padding=12)
     frm.pack(fill="both", expand=True)
@@ -286,9 +366,21 @@ def run_gui() -> None:
     entry.pack(fill="x", pady=6)
     entry.focus_set()
 
-    ttk.Button(frm, text="Check", command=on_check).pack(anchor="w", pady=6)
+    # Enter triggers check
+    entry.bind("<Return>", on_check)
 
-    txt = tk.Text(frm, wrap="word", height=24)
+    btn_row = ttk.Frame(frm)
+    btn_row.pack(fill="x", pady=6)
+
+    ttk.Button(btn_row, text="Check", command=on_check).pack(side="left")
+    ttk.Button(btn_row, text="Copy result", command=on_copy).pack(side="left", padx=8)
+    ttk.Button(btn_row, text="Save TXT", command=on_save_txt).pack(side="left")
+    ttk.Button(btn_row, text="Save JSON", command=on_save_json).pack(side="left", padx=8)
+
+    status_var = tk.StringVar(value=AUTHOR_MARK)
+    ttk.Label(frm, textvariable=status_var).pack(anchor="w", pady=(6, 0))
+
+    txt = tk.Text(frm, wrap="word", height=26)
     txt.pack(fill="both", expand=True, pady=8)
     set_output(AUTHOR_MARK)
 
@@ -310,7 +402,7 @@ def main() -> None:
     """Entrypoint: GUI by default, CLI if --cli is provided."""
     args = parse_args()
 
-    # Default: GUI (no terminals needed)
+    # Default: GUI (no terminal needed)
     if not args.cli:
         run_gui()
         return

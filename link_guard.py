@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""link_guard.py: Offline URL/domain phishing risk heuristic scorer.
+"""link_guard.py: Offline URL/domain phishing risk heuristic scorer + simple GUI.
 
-Examples:
-  python link_guard.py "https://secure-paypal.com/login"
-  python link_guard.py "google.com" --explain
-  python link_guard.py "http://185.12.34.56/verify" --json
-  python link_guard.py "xn--pple-43d.com/account/update?token=abcd" --explain
-  python link_guard.py "paypal-security-check.top/login?next=wallet" --quiet
+GUI usage (no terminal):
+  - Just run the file (double-click or Run in IDE), paste a URL, press Check.
+
+CLI usage (optional):
+  python link_guard.py --cli "https://secure-paypal.com/login" --explain
+  python link_guard.py --cli "google.com" --explain
+  python link_guard.py --cli "http://185.12.34.56/verify" --json
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import ParseResult, urlparse
 
+
+AUTHOR_MARK = "Made by Edison (GitHub: edisonaston)"
 
 SUSPICIOUS_KEYWORDS = {
     "login",
@@ -207,6 +210,7 @@ def analyze(parsed: ParseResult) -> dict[str, Any]:
         "score": score,
         "label": label,
         "triggers": [t.as_dict() for t in triggers],
+        "author": AUTHOR_MARK,
     }
 
 
@@ -224,19 +228,99 @@ def build_explanation(result: dict[str, Any]) -> str:
     )
 
 
+def run_gui() -> None:
+    """Super simple GUI: paste URL -> get risk result."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    def set_output(text: str) -> None:
+        txt.configure(state="normal")
+        txt.delete("1.0", "end")
+        txt.insert("1.0", text)
+        txt.configure(state="disabled")
+
+    def format_result(url: str) -> str:
+        parsed = normalize_input(url)
+        result = analyze(parsed)
+        result["explanation"] = build_explanation(result)
+
+        lines: list[str] = []
+        lines.append("Link Guard — offline URL risk checker")
+        lines.append("")
+        lines.append(f"Normalized URL: {result['normalized_url']}")
+        lines.append(f"Host: {result['host']}")
+        lines.append(f"Risk: {result['score']}/100 ({result['label']})")
+        lines.append("")
+        lines.append("Triggers:")
+        if result["triggers"]:
+            for trig in result["triggers"]:
+                lines.append(f"- (+{trig['points']}) {trig['reason']}")
+        else:
+            lines.append("- None")
+        lines.append("")
+        lines.append("Explanation:")
+        lines.append(result["explanation"])
+        lines.append("")
+        lines.append(AUTHOR_MARK)
+        return "\n".join(lines)
+
+    def on_check() -> None:
+        url = entry.get().strip()
+        if not url:
+            set_output("Paste a URL or domain first.\n\n" + AUTHOR_MARK)
+            return
+        try:
+            set_output(format_result(url))
+        except Exception as e:
+            set_output(f"Error: {e}\n\n{AUTHOR_MARK}")
+
+    root = tk.Tk()
+    root.title("Link Guard - URL Risk Checker")
+    root.geometry("780x580")
+
+    frm = ttk.Frame(root, padding=12)
+    frm.pack(fill="both", expand=True)
+
+    ttk.Label(frm, text="Paste URL or domain:").pack(anchor="w")
+    entry = ttk.Entry(frm)
+    entry.pack(fill="x", pady=6)
+    entry.focus_set()
+
+    ttk.Button(frm, text="Check", command=on_check).pack(anchor="w", pady=6)
+
+    txt = tk.Text(frm, wrap="word", height=24)
+    txt.pack(fill="both", expand=True, pady=8)
+    set_output(AUTHOR_MARK)
+
+    root.mainloop()
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line flags."""
     parser = argparse.ArgumentParser(description="Offline phishing/scam URL heuristic analyzer")
-    parser.add_argument("url_or_domain", help="URL or domain to analyze")
+    parser.add_argument("url_or_domain", nargs="?", help="URL or domain to analyze (CLI mode)")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output JSON only")
     parser.add_argument("--explain", action="store_true", help="Include plain-language explanation")
     parser.add_argument("--quiet", action="store_true", help="Hide trigger list in text output")
+    parser.add_argument("--cli", action="store_true", help="Run in terminal (CLI) mode")
     return parser.parse_args()
 
 
 def main() -> None:
-    """CLI entrypoint."""
+    """Entrypoint: GUI by default, CLI if --cli is provided."""
     args = parse_args()
+
+    # Default: GUI (no terminals needed)
+    if not args.cli:
+        run_gui()
+        return
+
+    # CLI mode
+    if not args.url_or_domain:
+        print("Error: url_or_domain is required in --cli mode")
+        print("Example: python link_guard.py --cli https://example.com --explain")
+        return
+
     parsed = normalize_input(args.url_or_domain)
     result = analyze(parsed)
 
@@ -262,6 +346,8 @@ def main() -> None:
     if args.explain:
         print("Explanation:")
         print(result["explanation"])
+
+    print(AUTHOR_MARK)
 
 
 if __name__ == "__main__":
